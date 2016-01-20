@@ -101,13 +101,23 @@ class CephCollector(diamond.collector.Collector):
         an empty result set is returned.
         """
         try:
-            json_blob = subprocess.check_output(
-                [self.config['ceph_binary'],
+            #json_blob = subprocess.check_output(
+            #    [self.config['ceph_binary'],
+            #     '--admin-daemon',
+            #     name,
+            #     'perf',
+            #     'dump',
+            #     ])
+            cmd = [
+                 self.config['ceph_binary'],
                  '--admin-daemon',
                  name,
                  'perf',
                  'dump',
-                 ])
+            ]
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+            json_blob = process.communicate()[0]
+
         except subprocess.CalledProcessError, err:
             self.log.info('Could not get stats from %s: %s',
                           name, err)
@@ -144,3 +154,65 @@ class CephCollector(diamond.collector.Collector):
             stats = self._get_stats_from_socket(path)
             self._publish_stats(counter_prefix, stats)
         return
+class CephOsdCollector(CephCollector):
+
+    def _get_stats(self):
+        """Return the parsed JSON data returned when ceph is told to
+        dump the stats from the named socket.
+
+        In the event of an error error, the exception is logged, and
+        an empty result set is returned.
+        """
+        try:
+            #json_blob = subprocess.check_output(
+            #    [self.config['ceph_binary'],
+            #     '--admin-daemon',
+            #     name,
+            #     'perf',
+            #     'dump',
+            #     ])
+            cmd = [
+                 self.config['ceph_binary'],
+                 'osd',
+                 'perf',
+                 '--format=json',
+            ]
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+            json_blob = process.communicate()[0]
+        except subprocess.CalledProcessError, err:
+            self.log.info('Could not get stats from %s: %s',
+                          name, err)
+            self.log.exception('Could not get stats from %s' % name)
+            return {}
+
+        try:
+            json_data = json.loads(json_blob)
+        except Exception, err:
+            self.log.info('Could not parse stats from %s: %s',
+                          name, err)
+            self.log.exception('Could not parse stats from %s' % name)
+            return {}
+
+        return json_data
+
+    def _publish_stats(self, stats):
+        """Given a stats dictionary from _get_stats_from_socket,
+        publish the individual values.
+        """
+        for perf in stats['osd_perf_infos']:
+            counter_prefix = 'osd.' + str(perf['id'])
+            for stat_name, stat_value in flatten_dictionary(
+                perf['perf_stats'],
+                prefix=counter_prefix,
+            ):
+              self.log.info('stat_name is %s', stat_name)
+              self.log.info('stat_value is %s', stat_value)
+              self.publish_gauge(stat_name, stat_value)
+
+    def collect(self):
+        """
+        Collect stats
+        """
+        self.log.info('in ceph osd collector')
+        stats = self._get_stats()
+        self._publish_stats(stats)
